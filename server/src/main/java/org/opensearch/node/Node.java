@@ -181,6 +181,7 @@ import org.opensearch.indices.replication.SegmentReplicationTargetService;
 import org.opensearch.indices.replication.SegmentReplicator;
 import org.opensearch.indices.store.IndicesStore;
 import org.opensearch.ingest.IngestService;
+import org.opensearch.monitor.EnhancedStatsBatchJob;
 import org.opensearch.monitor.MonitorService;
 import org.opensearch.monitor.fs.FsHealthService;
 import org.opensearch.monitor.fs.FsProbe;
@@ -778,7 +779,6 @@ public class Node implements Closeable {
             // File cache will be initialized by the node once circuit breakers are in place.
             initializeFileCache(settings, circuitBreakerService.getBreaker(CircuitBreaker.REQUEST));
             final MonitorService monitorService = new MonitorService(settings, nodeEnvironment, threadPool, fileCache);
-
             pluginsService.filterPlugins(CircuitBreakerPlugin.class).forEach(plugin -> {
                 CircuitBreaker breaker = circuitBreakerService.getBreaker(plugin.getCircuitBreaker(settings).getName());
                 plugin.setCircuitBreaker(breaker);
@@ -1573,7 +1573,8 @@ public class Node implements Closeable {
             logger.debug("initializing HTTP handlers ...");
             actionModule.initRestHandlers(() -> clusterService.state().nodes());
             logger.info("initialized");
-
+            final EnhancedStatsBatchJob enhancedStatsBatchJob = new EnhancedStatsBatchJob(settings, threadPool, monitorService.osService(), indicesService);
+            enhancedStatsBatchJob.start();
             success = true;
         } catch (IOException ex) {
             throw new OpenSearchException("failed to bind service", ex);
