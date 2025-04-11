@@ -45,6 +45,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Introduce 512 byte limit to search and ingest pipeline IDs ([#17786](https://github.com/opensearch-project/OpenSearch/pull/17786))
 - Avoid skewed segment replication lag metric ([#17831](https://github.com/opensearch-project/OpenSearch/pull/17831))
 - Increase the default segment counter step size when replica promoting ([#17568](https://github.com/opensearch-project/OpenSearch/pull/17568))
+- [WLM] Rename QueryGroup to WorkloadGroup ([#17901](https://github.com/opensearch-project/OpenSearch/pull/17901))
 
 ### Dependencies
 - Bump `com.nimbusds:nimbus-jose-jwt` from 9.41.1 to 10.0.2 ([#17607](https://github.com/opensearch-project/OpenSearch/pull/17607), [#17669](https://github.com/opensearch-project/OpenSearch/pull/17669))
@@ -66,6 +67,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 - Bump `com.google.api.grpc:proto-google-iam-v1` from 1.33.0 to 1.49.1 ([#17811](https://github.com/opensearch-project/OpenSearch/pull/17811))
 - Bump `com.azure:azure-core` from 1.54.1 to 1.55.3 ([#17810](https://github.com/opensearch-project/OpenSearch/pull/17810))
 - Bump `org.apache.poi` version from 5.2.5 to 5.4.1 in /plugins/ingest-attachment ([#17887](https://github.com/opensearch-project/OpenSearch/pull/17887))
+- Bump `org.opensearch:protobufs` from 0.2.0 to 0.3.0 ([#17888](https://github.com/opensearch-project/OpenSearch/pull/17888))
 
 ### Changed
 
