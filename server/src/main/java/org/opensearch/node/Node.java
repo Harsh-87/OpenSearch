@@ -184,7 +184,6 @@ import org.opensearch.indices.replication.SegmentReplicationTargetService;
 import org.opensearch.indices.replication.SegmentReplicator;
 import org.opensearch.indices.store.IndicesStore;
 import org.opensearch.ingest.IngestService;
-import org.opensearch.monitor.EnhancedStatsBatchJob;
 import org.opensearch.monitor.MonitorService;
 import org.opensearch.monitor.fs.FsHealthService;
 import org.opensearch.monitor.fs.FsProbe;
@@ -367,7 +366,6 @@ public class Node implements Closeable {
      * Note that this does not control whether the node stores actual indices (see
      * {@link #NODE_DATA_SETTING}). However, if this is false, {@link #NODE_DATA_SETTING}
      * and {@link #NODE_MASTER_SETTING} must also be false.
-     *
      */
     public static final Setting<Boolean> NODE_LOCAL_STORAGE_SETTING = Setting.boolSetting(
         "node.local_storage",
@@ -895,8 +893,8 @@ public class Node implements Closeable {
             directoryFactories.putAll(builtInDirectoryFactories);
 
             final Map<String, IndexStorePlugin.RecoveryStateFactory> recoveryStateFactories = pluginsService.filterPlugins(
-                IndexStorePlugin.class
-            )
+                    IndexStorePlugin.class
+                )
                 .stream()
                 .map(IndexStorePlugin::getRecoveryStateFactories)
                 .flatMap(m -> m.entrySet().stream())
@@ -1152,6 +1150,9 @@ public class Node implements Closeable {
                 threadPool,
                 workloadGroupService
             );
+
+            AutoForceMergeManager autoForceMergeManager = new AutoForceMergeManager(threadPool,
+                monitorService.osService(), monitorService.jvmService(), indicesService);
 
             final Collection<SecureSettingsFactory> secureSettingsFactories = pluginsService.filterPlugins(Plugin.class)
                 .stream()
@@ -1443,9 +1444,9 @@ public class Node implements Closeable {
 
             final Optional<TaskManagerClient> taskManagerClientOptional = FeatureFlags.isEnabled(BACKGROUND_TASK_EXECUTION_EXPERIMENTAL)
                 ? pluginsService.filterPlugins(TaskManagerClientPlugin.class)
-                    .stream()
-                    .map(plugin -> plugin.getTaskManagerClient(client, clusterService, threadPool))
-                    .findFirst()
+                .stream()
+                .map(plugin -> plugin.getTaskManagerClient(client, clusterService, threadPool))
+                .findFirst()
                 : Optional.empty();
 
             final PersistentTasksExecutorRegistry registry = new PersistentTasksExecutorRegistry(tasksExecutors);
@@ -1604,8 +1605,6 @@ public class Node implements Closeable {
             logger.debug("initializing HTTP handlers ...");
             actionModule.initRestHandlers(() -> clusterService.state().nodes());
             logger.info("initialized");
-            final EnhancedStatsBatchJob enhancedStatsBatchJob = new EnhancedStatsBatchJob(settings, threadPool, monitorService.osService(), indicesService);
-            enhancedStatsBatchJob.start();
             success = true;
         } catch (IOException ex) {
             throw new OpenSearchException("failed to bind service", ex);
@@ -2019,9 +2018,12 @@ public class Node implements Closeable {
         final BootstrapContext context,
         final BoundTransportAddress boundTransportAddress,
         List<BootstrapCheck> bootstrapChecks
-    ) throws NodeValidationException {}
+    ) throws NodeValidationException {
+    }
 
-    /** Writes a file to the logs dir containing the ports for the given transport type */
+    /**
+     * Writes a file to the logs dir containing the ports for the given transport type
+     */
     private void writePortsFile(String type, BoundTransportAddress boundAddress) {
         Path tmpPortsFile = environment.logsDir().resolve(type + ".ports.tmp");
         try (BufferedWriter writer = Files.newBufferedWriter(tmpPortsFile, StandardCharsets.UTF_8)) {
@@ -2049,6 +2051,7 @@ public class Node implements Closeable {
 
     /**
      * Creates a new {@link CircuitBreakerService} based on the settings provided.
+     *
      * @see #BREAKER_TYPE_KEY
      */
     public static CircuitBreakerService createCircuitBreakerService(
@@ -2124,6 +2127,7 @@ public class Node implements Closeable {
 
     /**
      * Get Custom Name Resolvers list based on a Discovery Plugins list
+     *
      * @param discoveryPlugins Discovery plugins list
      */
     private List<NetworkService.CustomNameResolver> getCustomNameResolvers(List<DiscoveryPlugin> discoveryPlugins) {
@@ -2137,7 +2141,9 @@ public class Node implements Closeable {
         return customNameResolvers;
     }
 
-    /** Constructs a ClusterInfoService which may be mocked for tests. */
+    /**
+     * Constructs a ClusterInfoService which may be mocked for tests.
+     */
     protected ClusterInfoService newClusterInfoService(
         Settings settings,
         ClusterService clusterService,
@@ -2152,7 +2158,9 @@ public class Node implements Closeable {
         return service;
     }
 
-    /** Constructs a {@link org.opensearch.http.HttpServerTransport} which may be mocked for tests. */
+    /**
+     * Constructs a {@link org.opensearch.http.HttpServerTransport} which may be mocked for tests.
+     */
     protected HttpServerTransport newHttpTransport(NetworkModule networkModule) {
         return networkModule.getHttpServerTransportSupplier().get();
     }
