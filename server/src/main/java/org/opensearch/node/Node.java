@@ -56,6 +56,7 @@ import org.opensearch.action.search.SearchTaskRequestOperationsListener;
 import org.opensearch.action.search.SearchTransportService;
 import org.opensearch.action.support.TransportAction;
 import org.opensearch.action.update.UpdateHelper;
+import org.opensearch.arrow.spi.StreamManager;
 import org.opensearch.bootstrap.BootstrapCheck;
 import org.opensearch.bootstrap.BootstrapContext;
 import org.opensearch.cluster.ClusterInfoService;
@@ -153,6 +154,8 @@ import org.opensearch.index.SegmentReplicationStatsTracker;
 import org.opensearch.index.analysis.AnalysisRegistry;
 import org.opensearch.index.compositeindex.CompositeIndexSettings;
 import org.opensearch.index.engine.EngineFactory;
+import org.opensearch.index.engine.MergedSegmentWarmerFactory;
+import org.opensearch.index.mapper.MappingTransformerRegistry;
 import org.opensearch.index.recovery.RemoteStoreRestoreService;
 import org.opensearch.index.remote.RemoteIndexPathUploader;
 import org.opensearch.index.remote.RemoteStoreStatsTrackerFactory;
@@ -219,6 +222,7 @@ import org.opensearch.plugins.ScriptPlugin;
 import org.opensearch.plugins.SearchPipelinePlugin;
 import org.opensearch.plugins.SearchPlugin;
 import org.opensearch.plugins.SecureSettingsFactory;
+import org.opensearch.plugins.StreamManagerPlugin;
 import org.opensearch.plugins.SystemIndexPlugin;
 import org.opensearch.plugins.TaskManagerClientPlugin;
 import org.opensearch.plugins.TelemetryAwarePlugin;
@@ -315,6 +319,7 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 import static java.util.stream.Collectors.toList;
+import static org.opensearch.common.util.FeatureFlags.ARROW_STREAMS_SETTING;
 import static org.opensearch.common.util.FeatureFlags.BACKGROUND_TASK_EXECUTION_EXPERIMENTAL;
 import static org.opensearch.common.util.FeatureFlags.TELEMETRY;
 import static org.opensearch.env.NodeEnvironment.collectFileCacheDataPath;
@@ -450,6 +455,7 @@ public class Node implements Closeable {
     private final AtomicReference<RunnableTaskExecutionListener> runnableTaskListener;
     private FileCache fileCache;
     private final RemoteStoreStatsTrackerFactory remoteStoreStatsTrackerFactory;
+    private final MergedSegmentWarmerFactory mergedSegmentWarmerFactory;
 
     public Node(Environment environment) {
         this(environment, Collections.emptyList(), true);
@@ -763,7 +769,8 @@ public class Node implements Closeable {
                 clusterManagerMetrics
             );
             modules.add(clusterModule);
-            IndicesModule indicesModule = new IndicesModule(pluginsService.filterPlugins(MapperPlugin.class));
+            final List<MapperPlugin> mapperPlugins = pluginsService.filterPlugins(MapperPlugin.class);
+            IndicesModule indicesModule = new IndicesModule(mapperPlugins);
             modules.add(indicesModule);
 
             SearchModule searchModule = new SearchModule(settings, pluginsService.filterPlugins(SearchPlugin.class));
@@ -1386,6 +1393,25 @@ public class Node implements Closeable {
                 cacheService
             );
 
+            if (FeatureFlags.isEnabled(ARROW_STREAMS_SETTING)) {
+                final List<StreamManagerPlugin> streamManagerPlugins = pluginsService.filterPlugins(StreamManagerPlugin.class);
+
+                final List<StreamManager> streamManagers = streamManagerPlugins.stream()
+                    .map(StreamManagerPlugin::getStreamManager)
+                    .filter(Optional::isPresent)
+                    .map(Optional::get)
+                    .toList();
+
+                if (streamManagers.size() > 1) {
+                    throw new IllegalStateException(
+                        String.format(Locale.ROOT, "Only one StreamManagerPlugin can be installed. Found: %d", streamManagerPlugins.size())
+                    );
+                } else if (streamManagers.isEmpty() == false) {
+                    StreamManager streamManager = streamManagers.getFirst();
+                    streamManagerPlugins.forEach(plugin -> plugin.onStreamManagerInitialized(streamManager));
+                }
+            }
+
             final SearchService searchService = newSearchService(
                 clusterService,
                 indicesService,
@@ -1431,6 +1457,10 @@ public class Node implements Closeable {
             );
             resourcesToClose.add(persistentTasksClusterService);
             final PersistentTasksService persistentTasksService = new PersistentTasksService(clusterService, threadPool, client);
+
+            mergedSegmentWarmerFactory = new MergedSegmentWarmerFactory(transportService, recoverySettings, clusterService);
+
+            final MappingTransformerRegistry mappingTransformerRegistry = new MappingTransformerRegistry(mapperPlugins, xContentRegistry);
 
             modules.add(b -> {
                 b.bind(Node.class).toInstance(this);
@@ -1533,6 +1563,8 @@ public class Node implements Closeable {
                 b.bind(SegmentReplicationStatsTracker.class).toInstance(segmentReplicationStatsTracker);
                 b.bind(SearchRequestOperationsCompositeListenerFactory.class).toInstance(searchRequestOperationsCompositeListenerFactory);
                 b.bind(SegmentReplicator.class).toInstance(segmentReplicator);
+                b.bind(MergedSegmentWarmerFactory.class).toInstance(mergedSegmentWarmerFactory);
+                b.bind(MappingTransformerRegistry.class).toInstance(mappingTransformerRegistry);
 
                 taskManagerClientOptional.ifPresent(value -> b.bind(TaskManagerClient.class).toInstance(value));
             });
