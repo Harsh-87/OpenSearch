@@ -140,6 +140,7 @@ import org.opensearch.monitor.jvm.JvmGcMonitorService;
 import org.opensearch.monitor.jvm.JvmService;
 import org.opensearch.monitor.os.OsService;
 import org.opensearch.monitor.process.ProcessService;
+import org.opensearch.node.AutoForceMergeManager;
 import org.opensearch.node.Node;
 import org.opensearch.node.Node.DiscoverySettings;
 import org.opensearch.node.NodeRoleSettings;
@@ -242,11 +243,11 @@ public final class ClusterSettings extends AbstractScopedSettings {
         public void apply(Settings value, Settings current, Settings previous) {
             for (String key : value.keySet()) {
                 assert loggerPredicate.test(key);
-                String component = key.substring("logger.".length());
-                if ("level".equals(component)) {
+                String component = key.substring("logger." .length());
+                if ("level" .equals(component)) {
                     continue;
                 }
-                if ("_root".equals(component)) {
+                if ("_root" .equals(component)) {
                     final String rootLevel = value.get(key);
                     if (rootLevel == null) {
                         Loggers.setLevel(LogManager.getRootLogger(), Loggers.LOG_DEFAULT_LEVEL_SETTING.get(settings));
@@ -823,7 +824,15 @@ public final class ClusterSettings extends AbstractScopedSettings {
                 ),
 
                 // Setting related to refresh optimisations
-                IndicesService.CLUSTER_REFRESH_FIXED_INTERVAL_SCHEDULE_ENABLED_SETTING
+                IndicesService.CLUSTER_REFRESH_FIXED_INTERVAL_SCHEDULE_ENABLED_SETTING,
+
+                // Settings related to Auto Force Merge Manager
+                AutoForceMergeManager.SEGMENT_COUNT_THRESHOLD_FOR_AUTO_FORCE_MERGE,
+                AutoForceMergeManager.WAIT_BETWEEN_AUTO_FORCE_MERGE_SHARDS,
+                AutoForceMergeManager.AUTO_FORCE_MERGE_SCHEDULER_FREQUENCY,
+                AutoForceMergeManager.CPU_THRESHOLD_PERCENTAGE_FOR_AUTO_FORCE_MERGE,
+                AutoForceMergeManager.JVM_THRESHOLD_PERCENTAGE_FOR_AUTO_FORCE_MERGE,
+                AutoForceMergeManager.FORCE_MERGE_THREADS_THRESHOLD_COUNT_FOR_AUTO_FORCE_MERGE
             )
         )
     );
