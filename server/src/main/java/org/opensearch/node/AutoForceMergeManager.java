@@ -258,8 +258,23 @@ public class AutoForceMergeManager {
         return stats.getTranslog() != null ? stats.getTranslog().getEarliestLastModifiedAge() : 0;
     }
 
+    /**
+     * Validates the node configuration requirements for auto force merge operations.
+     * This validator ensures that the node meets two primary criteria:
+     * 1. It must be a dedicated data node (hot node)
+     * 2. Remote store must be enabled
+     * The validation is performed once and cached for subsequent checks to improve performance.
+     */
     protected class ConfigurationValidator implements ValidationStrategy {
 
+        /**
+         * Validates the node configuration against required criteria.
+         * This method first ensures initialization is complete, then checks if the node
+         * is a dedicated data node with remote store enabled.
+         *
+         * @return ValidationResult with true if all configuration requirements are met,
+         *         false otherwise. If validation fails, the associated task is closed.
+         */
         @Override
         public ValidationResult validate() {
             initializeIfNeeded();
@@ -271,6 +286,15 @@ public class AutoForceMergeManager {
             return new ValidationResult(true);
         }
 
+        /**
+         * Initializes the configuration check results if not already done.
+         * This method performs a one-time check of:
+         * - Node type (must be data node but not warm node)
+         * - Remote store configuration
+         *
+         * The results are cached to avoid repeated checks.
+         * Thread-safe through atomic operation on initialCheckDone.
+         */
         private void initializeIfNeeded() {
             if (!initialCheckDone.get()) {
                 DiscoveryNode localNode = clusterService.localNode();
@@ -280,12 +304,23 @@ public class AutoForceMergeManager {
             }
         }
 
+        /**
+         * Checks if remote storage is enabled in the cluster settings.
+         *
+         * @return true if remote store is enabled in cluster settings,
+         *         false otherwise. Defaults to false if setting is not present.
+         */
         private boolean isRemoteStorageEnabled() {
             Settings clusterSettings = clusterService.getSettings();
             return clusterSettings.getAsBoolean("cluster.remote_store.state.enabled", false);
         }
     }
 
+    /**
+     * Validates node-level conditions for force merge operations.
+     * This validator checks CPU usage, JVM memory usage, and force merge thread availability
+     * to determine if force merge operations can proceed safely.
+     */
     protected class NodeValidator implements ValidationStrategy {
 
         @Override
@@ -316,6 +351,11 @@ public class AutoForceMergeManager {
         }
     }
 
+    /**
+     * Validates shard-level conditions for force merge operations.
+     * This validator checks segment count and translog age to determine
+     * if a specific shard is eligible for force merge.
+     */
     protected class ShardValidator implements ValidationStrategy {
 
         private IndexShard shard;
@@ -348,10 +388,19 @@ public class AutoForceMergeManager {
         }
     }
 
+    /**
+     * Strategy interface for implementing different validation approaches
+     * in the force merge process. Implementations can validate different aspects
+     * such as node conditions, shard conditions, or custom criteria.
+     */
     public interface ValidationStrategy {
         ValidationResult validate();
     }
 
+    /**
+     * Represents the result of a validation operation.
+     * This class is immutable and thread-safe.
+     */
     public static final class ValidationResult {
         private final boolean allowed;
 
@@ -364,18 +413,35 @@ public class AutoForceMergeManager {
         }
     }
 
-    public final class AsyncForceMergeTask extends AbstractAsyncTask {
+    /**
+     * Asynchronous task that manages force merge operations.
+     * This task runs periodically to check conditions and trigger force merge
+     * operations when appropriate.
+     */
+    protected final class AsyncForceMergeTask extends AbstractAsyncTask {
 
+        /**
+         * Constructs a new AsyncForceMergeTask and initializes its schedule.
+         */
         public AsyncForceMergeTask() {
             super(logger, threadPool, schedulerFrequency, true);
             rescheduleIfNecessary();
         }
 
+        /**
+         * Determines if the task should be rescheduled after completion.
+         *
+         * @return true to indicate that the task should always be rescheduled
+         */
         @Override
         protected boolean mustReschedule() {
             return true;
         }
 
+        /**
+         * Executes the force merge task's core logic.
+         * Validates configuration and triggers force merge if conditions are met.
+         */
         @Override
         protected void runInternal() {
             if (!initialCheckDone.get() && !(configurationValidator.validate().isAllowed())) {
@@ -385,6 +451,11 @@ public class AutoForceMergeManager {
             triggerForceMerge();
         }
 
+        /**
+         * Specifies which thread pool should be used for this task.
+         *
+         * @return the name of the force merge thread pool
+         */
         @Override
         protected String getThreadPool() {
             return ThreadPool.Names.FORCE_MERGE;

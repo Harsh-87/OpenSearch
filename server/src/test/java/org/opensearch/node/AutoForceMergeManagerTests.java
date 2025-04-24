@@ -118,7 +118,7 @@ public class AutoForceMergeManagerTests extends OpenSearchTestCase {
         assertTrue(autoForceMergeManager.getConfigurationValidator().validate().isAllowed());
     }
 
-    public void testConfigurationValidatorWithNonDataNode() throws InterruptedException {
+    public void testConfigurationValidatorWithNonDataNode() {
         DiscoveryNode warmNode = getNodeWithRoles(WARM_NODE_1, Set.of(DiscoveryNodeRole.DATA_ROLE, DiscoveryNodeRole.WARM_ROLE));
         Settings settings = Settings.builder()
             .put("cluster.auto.force.merge.scheduler.frequency", "1s")
