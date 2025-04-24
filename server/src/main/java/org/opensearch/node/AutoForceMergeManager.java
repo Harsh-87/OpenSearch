@@ -278,8 +278,13 @@ public class AutoForceMergeManager {
         @Override
         public ValidationResult validate() {
             initializeIfNeeded();
-            if (!(isOnlyDataNode && isRemoteStoreEnabled)) {
+            if (!isRemoteStoreEnabled) {
                 logger.info("Node configuration doesn't meet requirements. Closing task.");
+                task.close();
+                return new ValidationResult(false);
+            }
+            if (!isOnlyDataNode) {
+                logger.info("Domain configuration is not meeting the criteria. Closing task.");
                 task.close();
                 return new ValidationResult(false);
             }
@@ -291,7 +296,6 @@ public class AutoForceMergeManager {
          * This method performs a one-time check of:
          * - Node type (must be data node but not warm node)
          * - Remote store configuration
-         *
          * The results are cached to avoid repeated checks.
          * Thread-safe through atomic operation on initialCheckDone.
          */
@@ -381,7 +385,7 @@ public class AutoForceMergeManager {
                 return new ValidationResult(false);
             }
             if (translogStats.getEarliestLastModifiedAge() < schedulerFrequency.getMillis()) {
-                logger.info("Shard {} trans log is too recent", shard.shardId());
+                logger.info("Shard {} translog is too recent.", shard.shardId());
                 return new ValidationResult(false);
             }
             return new ValidationResult(true);
@@ -445,7 +449,6 @@ public class AutoForceMergeManager {
         @Override
         protected void runInternal() {
             if (!initialCheckDone.get() && !(configurationValidator.validate().isAllowed())) {
-                logger.info("Domain configuration is not meeting the criteria");
                 return;
             }
             triggerForceMerge();
