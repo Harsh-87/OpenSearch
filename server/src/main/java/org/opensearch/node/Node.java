@@ -57,6 +57,7 @@ import org.opensearch.action.search.SearchTransportService;
 import org.opensearch.action.support.TransportAction;
 import org.opensearch.action.update.UpdateHelper;
 import org.opensearch.arrow.spi.StreamManager;
+import org.opensearch.autoforcemerge.AutoForceMergeManager;
 import org.opensearch.bootstrap.BootstrapCheck;
 import org.opensearch.bootstrap.BootstrapContext;
 import org.opensearch.cluster.ClusterInfoService;
@@ -447,7 +448,7 @@ public class Node implements Closeable {
     private final LocalNodeFactory localNodeFactory;
     private final NodeService nodeService;
     private final Tracer tracer;
-
+    private final AutoForceMergeManager autoForceMergeManager;
     private final MetricsRegistry metricsRegistry;
     final NamedWriteableRegistry namedWriteableRegistry;
     private final AtomicReference<RunnableTaskExecutionListener> runnableTaskListener;
@@ -1152,8 +1153,7 @@ public class Node implements Closeable {
                 workloadGroupService
             );
 
-            AutoForceMergeManager autoForceMergeManager = new AutoForceMergeManager(threadPool,
-                monitorService.osService(), monitorService.jvmService(), indicesService, clusterService);
+            this.autoForceMergeManager = new AutoForceMergeManager(threadPool, monitorService.osService(), monitorService.jvmService(), indicesService, clusterService);
 
             final Collection<SecureSettingsFactory> secureSettingsFactories = pluginsService.filterPlugins(Plugin.class)
                 .stream()
@@ -1863,7 +1863,9 @@ public class Node implements Closeable {
         injector.getInstance(SearchService.class).stop();
         injector.getInstance(TransportService.class).stop();
         nodeService.getTaskCancellationMonitoringService().stop();
-
+        if (autoForceMergeManager.lifecycleState() != Lifecycle.State.STOPPED) {
+            autoForceMergeManager.stop();
+        }
         pluginLifecycleComponents.forEach(LifecycleComponent::stop);
         // we should stop this last since it waits for resources to get released
         // if we had scroll searchers etc or recovery going on we wait for to finish.
@@ -1963,7 +1965,9 @@ public class Node implements Closeable {
         if (logger.isTraceEnabled()) {
             toClose.add(() -> logger.trace("Close times for each service:\n{}", stopWatch.prettyPrint()));
         }
-
+        if (autoForceMergeManager.lifecycleState() != Lifecycle.State.STOPPED) {
+            autoForceMergeManager.stop();
+        }
         IOUtils.close(toClose);
         logger.info("closed");
     }
