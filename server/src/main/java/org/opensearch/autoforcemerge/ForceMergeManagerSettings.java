@@ -149,13 +149,7 @@ public class ForceMergeManagerSettings {
     }
 
     public void setAutoForceMergeFeatureEnabled(Boolean autoForceMergeFeatureEnabled) {
-        if (this.autoForceMergeFeatureEnabled != autoForceMergeFeatureEnabled) {
-            if (autoForceMergeFeatureEnabled)
-                autoForceMergeManager.getTask().rescheduleIfNecessary();
-            else
-                autoForceMergeManager.getTask().close();
-            this.autoForceMergeFeatureEnabled = autoForceMergeFeatureEnabled;
-        }
+        this.autoForceMergeFeatureEnabled = autoForceMergeFeatureEnabled;
     }
 
     public Boolean isAutoForceMergeFeatureEnabled() {
@@ -180,6 +174,7 @@ public class ForceMergeManagerSettings {
 
     public void setSchedulerInterval(TimeValue schedulerInterval) {
         this.schedulerInterval = schedulerInterval;
+        autoForceMergeManager.getTask().setInterval(schedulerInterval);
     }
 
     public TimeValue getSchedulerInterval() {

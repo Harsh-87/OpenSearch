@@ -79,9 +79,6 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
 
     @Override
     protected void doStart() {
-        if (!forceMergeManagerSettings.isAutoForceMergeFeatureEnabled()) {
-            task.close();
-        }
     }
 
     @Override
@@ -96,8 +93,7 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
 
     private void triggerForceMerge() {
         if (!forceMergeManagerSettings.isAutoForceMergeFeatureEnabled()) {
-            logger.debug("Cluster configuration shows auto force merge feature is disabled. Closing task.");
-            task.close();
+            logger.info("Cluster configuration shows auto force merge feature is disabled. Closing task.");
             return;
         }
         if (!configurationValidator.hasWarmNodes()) {
@@ -200,13 +196,11 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
         public ValidationResult validate() {
             if (!forceMergeManagerSettings.isAutoForceMergeFeatureEnabled()) {
                 logger.debug("Cluster configuration shows auto force merge feature is disabled. Closing task.");
-                task.close();
                 return new ValidationResult(false);
             }
             initializeIfNeeded();
             if (!isRemoteStoreEnabled) {
                 logger.debug("Cluster configuration is not meeting the criteria. Closing task.");
-                task.close();
                 return new ValidationResult(false);
             }
             if (!isOnlyDataNode) {
