@@ -978,7 +978,7 @@ public final class IndexSettings {
      * while index level settings will overwrite node settings.
      *
      * @param indexMetadata the index metadata this settings object is associated with
-     * @param nodeSettings  the nodes settings this index is allocated on.
+     * @param nodeSettings the nodes settings this index is allocated on.
      */
     public IndexSettings(final IndexMetadata indexMetadata, final Settings nodeSettings) {
         this(indexMetadata, nodeSettings, IndexScopedSettings.DEFAULT_SCOPED_SETTINGS);
@@ -989,7 +989,7 @@ public final class IndexSettings {
      * while index level settings will overwrite node settings.
      *
      * @param indexMetadata the index metadata this settings object is associated with
-     * @param nodeSettings  the nodes settings this index is allocated on.
+     * @param nodeSettings the nodes settings this index is allocated on.
      */
     public IndexSettings(final IndexMetadata indexMetadata, final Settings nodeSettings, IndexScopedSettings indexScopedSettings) {
         scopedSettings = indexScopedSettings.copy(nodeSettings, indexMetadata);
@@ -1325,7 +1325,6 @@ public final class IndexSettings {
 
     /**
      * Returns the version the index was created on.
-     *
      * @see IndexMetadata#indexCreated(Settings)
      */
     public Version getIndexVersionCreated() {
@@ -1366,7 +1365,7 @@ public final class IndexSettings {
 
     /**
      * Returns true if segment replication is enabled on the index.
-     * <p>
+     *
      * Every shard on a remote node would also have SegRep enabled even without
      * proper index setting during the migration.
      */
@@ -1529,7 +1528,6 @@ public final class IndexSettings {
     /**
      * Returns the translog sync/upload buffer interval when remote translog store is enabled and index setting
      * {@code index.translog.durability} is set as {@code request}.
-     *
      * @return the buffer interval.
      */
     public TimeValue getRemoteTranslogUploadBufferInterval() {

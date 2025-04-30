@@ -244,11 +244,11 @@ public final class ClusterSettings extends AbstractScopedSettings {
         public void apply(Settings value, Settings current, Settings previous) {
             for (String key : value.keySet()) {
                 assert loggerPredicate.test(key);
-                String component = key.substring("logger." .length());
-                if ("level" .equals(component)) {
+                String component = key.substring("logger.".length());
+                if ("level".equals(component)) {
                     continue;
                 }
-                if ("_root" .equals(component)) {
+                if ("_root".equals(component)) {
                     final String rootLevel = value.get(key);
                     if (rootLevel == null) {
                         Loggers.setLevel(LogManager.getRootLogger(), Loggers.LOG_DEFAULT_LEVEL_SETTING.get(settings));
