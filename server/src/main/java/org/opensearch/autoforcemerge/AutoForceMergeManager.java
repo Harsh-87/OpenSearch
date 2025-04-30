@@ -19,6 +19,7 @@ import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.lifecycle.AbstractLifecycleComponent;
 import org.opensearch.common.util.concurrent.AbstractAsyncTask;
 import org.opensearch.index.IndexService;
+import org.opensearch.index.IndexSettings;
 import org.opensearch.index.engine.SegmentsStats;
 import org.opensearch.index.shard.IndexShard;
 import org.opensearch.index.translog.TranslogStats;
@@ -70,13 +71,6 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
         this.jvmService = jvmService;
         this.clusterService = clusterService;
         this.forceMergeManagerSettings = new ForceMergeManagerSettings(clusterService.getSettings(), clusterService.getClusterSettings(), this);
-        if (forceMergeManagerSettings.getAutoForceMergeFeatureEnabled()) {
-            this.doStart();
-        }
-    }
-
-    @Override
-    protected void doStart() {
         this.task = new AsyncForceMergeTask();
         this.configurationValidator = new ConfigurationValidator();
         this.nodeValidator = new NodeValidator();
@@ -84,20 +78,28 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
     }
 
     @Override
-    protected void doStop() {
-        if (this.task != null) {
-            this.task.close();
+    protected void doStart() {
+        if (!forceMergeManagerSettings.isAutoForceMergeFeatureEnabled()) {
+            task.close();
         }
     }
 
     @Override
+    protected void doStop() {
+        this.task.close();
+    }
+
+    @Override
     protected void doClose() {
-        if (this.task != null) {
-            this.task.close();
-        }
+        this.task.close();
     }
 
     private void triggerForceMerge() {
+        if (!forceMergeManagerSettings.isAutoForceMergeFeatureEnabled()) {
+            logger.debug("Cluster configuration shows auto force merge feature is disabled. Closing task.");
+            task.close();
+            return;
+        }
         if (!configurationValidator.hasWarmNodes()) {
             logger.debug("No warm nodes found. Skipping Auto Force merge.");
             return;
@@ -196,6 +198,11 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
          */
         @Override
         public ValidationResult validate() {
+            if (!forceMergeManagerSettings.isAutoForceMergeFeatureEnabled()) {
+                logger.debug("Cluster configuration shows auto force merge feature is disabled. Closing task.");
+                task.close();
+                return new ValidationResult(false);
+            }
             initializeIfNeeded();
             if (!isRemoteStoreEnabled) {
                 logger.debug("Cluster configuration is not meeting the criteria. Closing task.");
@@ -308,6 +315,10 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
                 logger.debug("No shard found.");
                 return new ValidationResult(false);
             }
+            if (!isIndexWarmCandidate(shard)) {
+                logger.info("Shard {} doesn't belong to a warm candidate index", shard.shardId());
+                return new ValidationResult(false);
+            }
             CommonStats stats = new CommonStats(indicesService.getIndicesQueryCache(), shard, flags);
             SegmentsStats segmentsStats = stats.getSegments();
             TranslogStats translogStats = stats.getTranslog();
@@ -320,6 +331,11 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
                 return new ValidationResult(false);
             }
             return new ValidationResult(true);
+        }
+
+        private boolean isIndexWarmCandidate(IndexShard shard) {
+            IndexSettings indexSettings = shard.indexSettings();
+            return indexSettings.getScopedSettings().get(IndexSettings.INDEX_IS_WARM_CANDIDATE_INDEX);
         }
     }
 
@@ -360,6 +376,7 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
      * operations when appropriate.
      */
     protected final class AsyncForceMergeTask extends AbstractAsyncTask {
+
 
         /**
          * Constructs a new AsyncForceMergeTask and initializes its schedule.

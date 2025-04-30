@@ -149,15 +149,16 @@ public class ForceMergeManagerSettings {
     }
 
     public void setAutoForceMergeFeatureEnabled(Boolean autoForceMergeFeatureEnabled) {
-        this.autoForceMergeFeatureEnabled = autoForceMergeFeatureEnabled;
-        if (this.autoForceMergeFeatureEnabled) {
-            autoForceMergeManager.start();
-        } else {
-            autoForceMergeManager.stop();
+        if (this.autoForceMergeFeatureEnabled != autoForceMergeFeatureEnabled) {
+            if (autoForceMergeFeatureEnabled)
+                autoForceMergeManager.getTask().rescheduleIfNecessary();
+            else
+                autoForceMergeManager.getTask().close();
+            this.autoForceMergeFeatureEnabled = autoForceMergeFeatureEnabled;
         }
     }
 
-    public Boolean getAutoForceMergeFeatureEnabled() {
+    public Boolean isAutoForceMergeFeatureEnabled() {
         return this.autoForceMergeFeatureEnabled;
     }
 

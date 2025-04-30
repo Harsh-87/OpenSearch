@@ -14,6 +14,7 @@ import org.opensearch.common.settings.Settings;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.core.common.unit.ByteSizeUnit;
 import org.opensearch.core.common.unit.ByteSizeValue;
+import org.opensearch.index.IndexSettings;
 import org.opensearch.index.engine.SegmentsStats;
 import org.opensearch.index.store.remote.file.CleanerDaemonThreadLeakFilter;
 import org.opensearch.node.Node;
@@ -99,6 +100,35 @@ public class AutoForceMergeManagerIT extends RemoteStoreBaseIntegTestCase {
 
         // Deleting the index (so that ref count drops to zero for all the files) and then pruning the cache to clear it to avoid any file
         // leaks
+        assertAcked(client().admin().indices().prepareDelete(INDEX_NAME_1).get());
+    }
+
+    public void testAutoForceMergeTriggeringWithOneShardOfNonWarmCandidate() throws Exception {
+        Settings clusterSettings = Settings.builder()
+            .put(super.nodeSettings(0))
+            .put(ForceMergeManagerSettings.AUTO_FORCE_MERGE_SETTING.getKey(), true)
+            .build();
+        InternalTestCluster internalTestCluster = internalCluster();
+        internalTestCluster.startClusterManagerOnlyNode(clusterSettings);
+        String dataNode = internalTestCluster.startDataOnlyNodes(1, clusterSettings).getFirst();
+        internalCluster().startWarmOnlyNodes(1, clusterSettings).getFirst();
+        Settings settings = Settings.builder()
+            .put(IndexMetadata.SETTING_NUMBER_OF_SHARDS, 1)
+            .put(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, 0)
+            .put(IndexSettings.INDEX_IS_WARM_CANDIDATE_INDEX.getKey(), false)
+            .build();
+        assertAcked(client().admin().indices().prepareCreate(INDEX_NAME_1).setSettings(settings).get());
+        for (int i = 0; i < INGESTION_COUNT; i++) {
+            indexBulk(INDEX_NAME_1, NUM_DOCS_IN_BULK);
+            flushAndRefresh(INDEX_NAME_1);
+        }
+        IndexShard shard = getIndexShard(dataNode, INDEX_NAME_1);
+        assertNotNull(shard);
+        SegmentsStats segmentsStatsBefore = shard.segmentStats(false, false);
+        Thread.sleep(TimeValue.parseTimeValue(SCHEDULER_INTERVAL, "test").getMillis() * 3);
+        flushAndRefresh(INDEX_NAME_1);
+        SegmentsStats segmentsStatsAfter = shard.segmentStats(false, false);
+        assertEquals(segmentsStatsBefore.getCount(), segmentsStatsAfter.getCount());
         assertAcked(client().admin().indices().prepareDelete(INDEX_NAME_1).get());
     }
 

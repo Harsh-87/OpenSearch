@@ -14,6 +14,7 @@ import org.opensearch.Version;
 import org.opensearch.cluster.ClusterName;
 import org.opensearch.cluster.ClusterState;
 import org.opensearch.cluster.block.ClusterBlocks;
+import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.cluster.node.DiscoveryNodeRole;
 import org.opensearch.cluster.node.DiscoveryNodes;
@@ -27,6 +28,7 @@ import org.opensearch.core.common.unit.ByteSizeUnit;
 import org.opensearch.core.common.unit.ByteSizeValue;
 import org.opensearch.core.index.shard.ShardId;
 import org.opensearch.index.IndexService;
+import org.opensearch.index.IndexSettings;
 import org.opensearch.index.engine.SegmentsStats;
 import org.opensearch.index.shard.IndexShard;
 import org.opensearch.index.translog.TranslogStats;
@@ -49,6 +51,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.mockito.Mockito.*;
 import static org.opensearch.gateway.remote.RemoteClusterStateService.REMOTE_CLUSTER_STATE_ENABLED_SETTING;
+import static org.opensearch.index.IndexSettingsTests.newIndexMeta;
 
 public class AutoForceMergeManagerTests extends OpenSearchTestCase {
 
@@ -115,6 +118,7 @@ public class AutoForceMergeManagerTests extends OpenSearchTestCase {
         Settings settings = Settings.builder()
             .put(REMOTE_CLUSTER_STATE_ENABLED_SETTING.getKey(), true)
             .put(ForceMergeManagerSettings.AUTO_FORCE_MERGE_SCHEDULER_INTERVAL.getKey(), "1s")
+            .put(ForceMergeManagerSettings.AUTO_FORCE_MERGE_SETTING.getKey(), true)
             .build();
         when(clusterService.getClusterSettings()).thenReturn(new ClusterSettings(settings, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS));
         when(clusterService.getSettings()).thenReturn(settings);
@@ -247,7 +251,27 @@ public class AutoForceMergeManagerTests extends OpenSearchTestCase {
         SegmentsStats segmentsStats = new SegmentsStats();
         segmentsStats.add(2);
         when(shard.segmentStats(false, false)).thenReturn(segmentsStats);
+        when(shard.indexSettings()).thenReturn(getNewIndexSettings("test_index"));
         assertTrue(autoForceMergeManager.getShardValidator().validate(shard).isAllowed());
+    }
+
+    public void testShardValidatorWithNonWarmCandidateIndexSetting() {
+        clusterSetup();
+        AutoForceMergeManager autoForceMergeManager = new AutoForceMergeManager(threadPool,
+            osService, jvmService, indicesService, clusterService);
+        autoForceMergeManager.start();
+        IndexShard shard = mock(IndexShard.class);
+        ShardId shardId = new ShardId("test_index", "_na_", 0);
+        when(shard.shardId()).thenReturn(shardId);
+        TranslogStats translogStats = new TranslogStats(0, 0, 0, 0, TimeValue.timeValueSeconds(5).getMillis());
+        when(shard.translogStats()).thenReturn(translogStats);
+        SegmentsStats segmentsStats = new SegmentsStats();
+        segmentsStats.add(1);
+        IndexSettings indexSettings = getNewIndexSettings("test_index");
+        indexSettings.setIsWarmCandidateIndex(false);
+        when(shard.indexSettings()).thenReturn(indexSettings);
+        when(shard.segmentStats(false, false)).thenReturn(segmentsStats);
+        assertEquals(false, autoForceMergeManager.getShardValidator().validate(shard).isAllowed());
     }
 
     public void testShardValidatorWithLowSegmentCount() {
@@ -262,6 +286,7 @@ public class AutoForceMergeManagerTests extends OpenSearchTestCase {
         when(shard.translogStats()).thenReturn(translogStats);
         SegmentsStats segmentsStats = new SegmentsStats();
         segmentsStats.add(1);
+        when(shard.indexSettings()).thenReturn(getNewIndexSettings("test_index"));
         when(shard.segmentStats(false, false)).thenReturn(segmentsStats);
         assertFalse(autoForceMergeManager.getShardValidator().validate(shard).isAllowed());
     }
@@ -278,6 +303,7 @@ public class AutoForceMergeManagerTests extends OpenSearchTestCase {
         when(shard.translogStats()).thenReturn(translogStats);
         SegmentsStats segmentsStats = new SegmentsStats();
         segmentsStats.add(2);
+        when(shard.indexSettings()).thenReturn(getNewIndexSettings("test_index"));
         when(shard.segmentStats(false, false)).thenReturn(segmentsStats);
         assertFalse(autoForceMergeManager.getShardValidator().validate(shard).isAllowed());
     }
@@ -321,6 +347,7 @@ public class AutoForceMergeManagerTests extends OpenSearchTestCase {
             .put(REMOTE_CLUSTER_STATE_ENABLED_SETTING.getKey(), true)
             .put(ForceMergeManagerSettings.AUTO_FORCE_MERGE_SCHEDULER_INTERVAL.getKey(), "3s")
             .put(ForceMergeManagerSettings.MERGE_DELAY_BETWEEN_SHARDS_FOR_AUTO_FORCE_MERGE.getKey(), "1s")
+            .put(ForceMergeManagerSettings.AUTO_FORCE_MERGE_SETTING.getKey(), true)
             .build();
         when(clusterService.getClusterSettings()).thenReturn(new ClusterSettings(settings, ClusterSettings.BUILT_IN_CLUSTER_SETTINGS));
         when(clusterService.getSettings()).thenReturn(settings);
@@ -353,6 +380,10 @@ public class AutoForceMergeManagerTests extends OpenSearchTestCase {
         when(indexService2.iterator()).thenReturn(indexShards2.iterator());
         List<IndexService> indexServices = Arrays.asList(indexService1, indexService2);
         when(indicesService.iterator()).thenReturn(indexServices.iterator());
+        when(shard1.indexSettings()).thenReturn(getNewIndexSettings("Index1"));
+        when(shard2.indexSettings()).thenReturn(getNewIndexSettings("Index1"));
+        when(shard3.indexSettings()).thenReturn(getNewIndexSettings("Index2"));
+        when(shard4.indexSettings()).thenReturn(getNewIndexSettings("Index2"));
 
         AutoForceMergeManager autoForceMergeManager = new AutoForceMergeManager(threadPool,
             osService, jvmService, indicesService, clusterService);
@@ -409,6 +440,15 @@ public class AutoForceMergeManagerTests extends OpenSearchTestCase {
         when(shard.routingEntry()).thenReturn(shardRouting);
         when(shardRouting.primary()).thenReturn(true);
         return shard;
+    }
+
+
+    private IndexSettings getNewIndexSettings(String indexName) {
+        return new IndexSettings(newIndexMeta(indexName, Settings.builder()
+            .put(IndexMetadata.SETTING_VERSION_CREATED, Version.CURRENT)
+            .put(IndexMetadata.SETTING_NUMBER_OF_SHARDS, "1")
+            .put(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, "0")
+            .put(IndexSettings.INDEX_IS_WARM_CANDIDATE_INDEX.getKey(), true).build()), Settings.EMPTY);
     }
 }
 
