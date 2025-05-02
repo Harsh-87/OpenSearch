@@ -277,7 +277,7 @@ public final class IndexScopedSettings extends AbstractScopedSettings {
                 IndexMetadata.INDEX_NUMBER_OF_SEARCH_REPLICAS_SETTING,
 
                 // Settings for Auto Force Merge
-                IndexSettings.INDEX_IS_WARM_CANDIDATE_INDEX,
+                IndexSettings.INDEX_ALLOW_AUTO_FORCE_MERGES,
 
                 // validate that built-in similarities don't get redefined
                 Setting.groupSetting("index.similarity.", (s) -> {

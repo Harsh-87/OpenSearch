@@ -17,11 +17,14 @@ import org.opensearch.cluster.ClusterState;
 import org.opensearch.cluster.node.DiscoveryNode;
 import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.lifecycle.AbstractLifecycleComponent;
+import org.opensearch.common.unit.TimeValue;
 import org.opensearch.common.util.concurrent.AbstractAsyncTask;
+import org.opensearch.common.util.concurrent.OpenSearchExecutors;
 import org.opensearch.index.IndexService;
 import org.opensearch.index.IndexSettings;
 import org.opensearch.index.engine.SegmentsStats;
 import org.opensearch.index.shard.IndexShard;
+import org.opensearch.index.shard.IndexShardState;
 import org.opensearch.index.translog.TranslogStats;
 import org.opensearch.indices.IndicesService;
 import org.opensearch.monitor.jvm.JvmService;
@@ -30,12 +33,11 @@ import org.opensearch.threadpool.ThreadPool;
 import org.opensearch.threadpool.ThreadPoolStats;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
+import java.util.stream.StreamSupport;
 
 import static org.opensearch.gateway.remote.RemoteClusterStateService.REMOTE_CLUSTER_STATE_ENABLED_SETTING;
 
@@ -55,11 +57,10 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
     private final IndicesService indicesService;
     private final ClusterService clusterService;
     private final AsyncForceMergeTask task;
-    private final ConfigurationValidator configurationValidator;
-    private final NodeValidator nodeValidator;
-    private final ShardValidator shardValidator;
+    private ConfigurationValidator configurationValidator;
+    private NodeValidator nodeValidator;
+    private ShardValidator shardValidator;
     private final ForceMergeManagerSettings forceMergeManagerSettings;
-    private final AtomicBoolean initialCheckDone = new AtomicBoolean(false);
 
     private static final Logger logger = LogManager.getLogger(AutoForceMergeManager.class);
 
@@ -70,32 +71,36 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
         this.indicesService = indicesService;
         this.jvmService = jvmService;
         this.clusterService = clusterService;
-        this.forceMergeManagerSettings = new ForceMergeManagerSettings(clusterService.getSettings(), clusterService.getClusterSettings(), this);
+        this.forceMergeManagerSettings = new ForceMergeManagerSettings(clusterService, this::modifySchedulerInterval);
         this.task = new AsyncForceMergeTask();
+    }
+
+    @Override
+    protected void doStart() {
         this.configurationValidator = new ConfigurationValidator();
         this.nodeValidator = new NodeValidator();
         this.shardValidator = new ShardValidator();
     }
 
     @Override
-    protected void doStart() {
-    }
-
-    @Override
     protected void doStop() {
-        this.task.close();
+        if (task != null) {
+            this.task.close();
+        }
     }
 
     @Override
     protected void doClose() {
-        this.task.close();
+        if (task != null) {
+            this.task.close();
+        }
+    }
+
+    private void modifySchedulerInterval(TimeValue schedulerInterval) {
+        this.task.setInterval(schedulerInterval);
     }
 
     private void triggerForceMerge() {
-        if (forceMergeManagerSettings.isAutoForceMergeFeatureEnabled() == false) {
-            logger.debug("Cluster configuration shows auto force merge feature is disabled. Closing task.");
-            return;
-        }
         if (configurationValidator.hasWarmNodes() == false) {
             logger.debug("No warm nodes found. Skipping Auto Force merge.");
             return;
@@ -104,19 +109,8 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
             logger.debug("Node capacity constraints are not allowing to trigger auto ForceMerge");
             return;
         }
-        List<IndexShard> shards = new ArrayList<>();
-        for (IndexService indexService : indicesService) {
-            for (IndexShard shard : indexService) {
-                if (shard.routingEntry().primary()) {
-                    if (shardValidator.validate(shard).isAllowed()) {
-                        shards.add(shard);
-                    }
-                }
-            }
-        }
-        List<IndexShard> sortedShards = getSortedShardsByTranslogAge(shards);
         int iteration = nodeValidator.getMaxConcurrentForceMerges();
-        for (IndexShard shard : sortedShards) {
+        for (IndexShard shard : getShardsBasedOnSorting(indicesService)) {
             if (iteration == 0 || nodeValidator.validate().isAllowed() == false) {
                 logger.debug("Node conditions no longer suitable for force merge");
                 break;
@@ -125,7 +119,7 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
             CompletableFuture.runAsync(() -> {
                 try {
                     shard.forceMerge(new ForceMergeRequest()
-                        .maxNumSegments(forceMergeManagerSettings.getSegmentCountThreshold()));
+                        .maxNumSegments(forceMergeManagerSettings.getSegmentCount()));
                     logger.debug("Merging is completed successfully for the shard {}", shard.shardId());
                 } catch (IOException e) {
                     logger.error("Error during force merge for shard {}", shard.shardId(), e);
@@ -142,9 +136,11 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
         }
     }
 
-    private List<IndexShard> getSortedShardsByTranslogAge(List<IndexShard> shards) {
-
-        return shards.stream()
+    private List<IndexShard> getShardsBasedOnSorting(Iterable<IndexService> indicesService) {
+        return StreamSupport.stream(indicesService.spliterator(), false)
+            .flatMap(indexService -> StreamSupport.stream(indexService.spliterator(), false))
+            .filter(shard -> shard.routingEntry().primary())
+            .filter(shard -> shardValidator.validate(shard).isAllowed())
             .sorted(new ShardAgeComparator())
             .collect(Collectors.toList());
     }
@@ -173,9 +169,15 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
      */
     protected class ConfigurationValidator implements ValidationStrategy {
 
-        private boolean isOnlyDataNode = false;
+        private final boolean isOnlyDataNode;
         private boolean isRemoteStoreEnabled = false;
         private boolean hasWarmNodes = false;
+
+        ConfigurationValidator() {
+            DiscoveryNode localNode = clusterService.localNode();
+            isOnlyDataNode = localNode.isDataNode() && !localNode.isWarmNode();
+            isRemoteStoreEnabled = isRemoteStorageEnabled();
+        }
 
         /**
          * Validates the node configuration against required criteria.
@@ -191,9 +193,9 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
                 logger.debug("Cluster configuration shows auto force merge feature is disabled. Closing task.");
                 return new ValidationResult(false);
             }
-            initializeIfNeeded();
             if (isRemoteStoreEnabled == false) {
                 logger.debug("Cluster configuration is not meeting the criteria. Closing task.");
+                task.close();
                 return new ValidationResult(false);
             }
             if (isOnlyDataNode == false) {
@@ -202,23 +204,6 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
                 return new ValidationResult(false);
             }
             return new ValidationResult(true);
-        }
-
-        /**
-         * Initializes the configuration check results if not already done.
-         * This method performs a one-time check of:
-         * - Node type (must be data node but not warm node)
-         * - Remote store configuration
-         * The results are cached to avoid repeated checks.
-         * Thread-safe through atomic operation on initialCheckDone.
-         */
-        private void initializeIfNeeded() {
-            if (initialCheckDone.get() == false) {
-                DiscoveryNode localNode = clusterService.localNode();
-                isOnlyDataNode = localNode.isDataNode() && !localNode.isWarmNode();
-                isRemoteStoreEnabled = isRemoteStorageEnabled();
-                initialCheckDone.set(true);
-            }
         }
 
         /**
@@ -249,18 +234,16 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
      */
     protected class NodeValidator implements ValidationStrategy {
 
-        private int maxConcurrentForceMerges;
-
         @Override
         public ValidationResult validate() {
             double cpuPercent = osService.stats().getCpu().getPercent();
             if (cpuPercent >= forceMergeManagerSettings.getCpuThreshold()) {
-                logger.debug("CPU usage too high: {}%", cpuPercent);
+                logger.debug("CPU usage: {} breached the threshold: {}", cpuPercent, forceMergeManagerSettings.getCpuThreshold());
                 return new ValidationResult(false);
             }
             double jvmUsedPercent = jvmService.stats().getMem().getHeapUsedPercent();
             if (jvmUsedPercent >= forceMergeManagerSettings.getJvmThreshold()) {
-                logger.debug("JVM memory usage too high: {}%", jvmUsedPercent);
+                logger.debug("JVM memory: {}% breached the threshold: {}", jvmUsedPercent, forceMergeManagerSettings.getJvmThreshold());
                 return new ValidationResult(false);
             }
             if (areForceMergeThreadsAvailable() == false) {
@@ -273,17 +256,14 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
         private boolean areForceMergeThreadsAvailable() {
             for (ThreadPoolStats.Stats stats : threadPool.stats()) {
                 if (stats.getName().equals(ThreadPool.Names.FORCE_MERGE)) {
-                    this.maxConcurrentForceMerges = Math.max(1, stats.getThreads()) * forceMergeManagerSettings.getConcurrencyMultiplier();
-                    if ((stats.getQueue() == 0))
-                        // If force merge thread count is set by the customer( greater than 0) and active thread count is already equal or more than this threshold block skip any more force merges
-                        return forceMergeManagerSettings.getForceMergeThreadCount() <= 0 || stats.getActive() < forceMergeManagerSettings.getForceMergeThreadCount();
+                    return stats.getQueue() == 0;
                 }
             }
             return false;
         }
 
         public Integer getMaxConcurrentForceMerges() {
-            return this.maxConcurrentForceMerges;
+            return Math.max(1, (OpenSearchExecutors.allocatedProcessors(clusterService.getSettings()) / 8)) * forceMergeManagerSettings.getConcurrencyMultiplier();
         }
     }
 
@@ -302,19 +282,31 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
                 logger.debug("No shard found.");
                 return new ValidationResult(false);
             }
+            if (shard.state() != IndexShardState.STARTED) {
+                logger.debug("Shard({}) skipped: Shard is not in started state.", shard.shardId());
+                return new ValidationResult(false);
+            }
             if (isIndexWarmCandidate(shard) == false) {
-                logger.debug("Shard {} doesn't belong to a warm candidate index", shard.shardId());
+                logger.debug("Shard({}) skipped: Shard doesn't belong to a warm candidate index", shard.shardId());
                 return new ValidationResult(false);
             }
             CommonStats stats = new CommonStats(indicesService.getIndicesQueryCache(), shard, flags);
             SegmentsStats segmentsStats = stats.getSegments();
             TranslogStats translogStats = stats.getTranslog();
-            if (segmentsStats != null && segmentsStats.getCount() <= forceMergeManagerSettings.getSegmentCountThreshold()) {
-                logger.debug("Shard {} doesn't have enough segments to merge.", shard.shardId());
+            if (segmentsStats != null && segmentsStats.getCount() <= forceMergeManagerSettings.getSegmentCount()) {
+                logger.debug(
+                    "Shard({}) skipped: Shard has {} segments, not exceeding threshold of {}",
+                    shard.shardId(),
+                    segmentsStats.getCount(),
+                    forceMergeManagerSettings.getSegmentCount()
+                );
                 return new ValidationResult(false);
             }
             if (translogStats != null && translogStats.getEarliestLastModifiedAge() < forceMergeManagerSettings.getSchedulerInterval().getMillis()) {
-                logger.debug("Shard {} translog is too recent.", shard.shardId());
+                logger.debug("Shard({}) skipped: Translog is too recent. Age({}ms)",
+                    shard.shardId(),
+                    translogStats.getEarliestLastModifiedAge()
+                );
                 return new ValidationResult(false);
             }
             return new ValidationResult(true);
@@ -322,11 +314,7 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
 
         private boolean isIndexWarmCandidate(IndexShard shard) {
             IndexSettings indexSettings = shard.indexSettings();
-            return indexSettings.getScopedSettings().get(IndexSettings.INDEX_IS_WARM_CANDIDATE_INDEX);
-        }
-
-        private boolean isRelocating(IndexShard shard){
-            return false;
+            return indexSettings.getScopedSettings().get(IndexSettings.INDEX_ALLOW_AUTO_FORCE_MERGES);
         }
     }
 
@@ -393,7 +381,7 @@ public class AutoForceMergeManager extends AbstractLifecycleComponent {
          */
         @Override
         protected void runInternal() {
-            if (initialCheckDone.get() == false && configurationValidator.validate().isAllowed() == false) {
+            if (configurationValidator.validate().isAllowed() == false) {
                 return;
             }
             triggerForceMerge();

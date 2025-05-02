@@ -9,14 +9,17 @@
 package org.opensearch.autoforcemerge;
 
 import org.junit.Before;
+import org.opensearch.cluster.service.ClusterService;
 import org.opensearch.common.settings.ClusterSettings;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.unit.TimeValue;
 import org.opensearch.test.OpenSearchTestCase;
 
 import java.util.Set;
+import java.util.function.Consumer;
 
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 public class ForceMergeManagerSettingsTests extends OpenSearchTestCase {
 
@@ -35,25 +38,27 @@ public class ForceMergeManagerSettingsTests extends OpenSearchTestCase {
 
         clusterSettings = new ClusterSettings(settings, Set.of(
             ForceMergeManagerSettings.AUTO_FORCE_MERGE_SETTING,
-            ForceMergeManagerSettings.SEGMENT_COUNT_THRESHOLD_FOR_AUTO_FORCE_MERGE,
+            ForceMergeManagerSettings.SEGMENT_COUNT_FOR_AUTO_FORCE_MERGE,
             ForceMergeManagerSettings.MERGE_DELAY_BETWEEN_SHARDS_FOR_AUTO_FORCE_MERGE,
             ForceMergeManagerSettings.AUTO_FORCE_MERGE_SCHEDULER_INTERVAL,
             ForceMergeManagerSettings.CPU_THRESHOLD_PERCENTAGE_FOR_AUTO_FORCE_MERGE,
             ForceMergeManagerSettings.JVM_THRESHOLD_PERCENTAGE_FOR_AUTO_FORCE_MERGE,
-            ForceMergeManagerSettings.FORCE_MERGE_THREADS_THRESHOLD_COUNT_FOR_AUTO_FORCE_MERGE,
             ForceMergeManagerSettings.CONCURRENCY_MULTIPLIER
         ));
 
-        forceMergeManagerSettings = new ForceMergeManagerSettings(settings, clusterSettings, autoForceMergeManager);
+        Consumer<TimeValue> mockConsumer = mock(Consumer.class);
+        ClusterService clusterService = mock(ClusterService.class);
+        when(clusterService.getClusterSettings()).thenReturn(clusterSettings);
+        when(clusterService.getSettings()).thenReturn(settings);
+        forceMergeManagerSettings = new ForceMergeManagerSettings(clusterService, mockConsumer);
     }
 
     public void testDefaultSettings() {
         assertEquals(false, forceMergeManagerSettings.isAutoForceMergeFeatureEnabled());
         assertEquals(forceMergeManagerSettings.getForcemergeDelay(), TimeValue.timeValueSeconds(10));
         assertEquals(forceMergeManagerSettings.getSchedulerInterval(), TimeValue.timeValueMinutes(30));
-        assertEquals(0, (int) forceMergeManagerSettings.getForceMergeThreadCount());
         assertEquals(2, (int) forceMergeManagerSettings.getConcurrencyMultiplier());
-        assertEquals(1, (int) forceMergeManagerSettings.getSegmentCountThreshold());
+        assertEquals(1, (int) forceMergeManagerSettings.getSegmentCount());
         assertEquals(80.0, forceMergeManagerSettings.getCpuThreshold(), 0.0);
         assertEquals(70.0, forceMergeManagerSettings.getJvmThreshold(), 0.0);
     }
@@ -61,20 +66,20 @@ public class ForceMergeManagerSettingsTests extends OpenSearchTestCase {
     public void testDynamicSettingsUpdate() {
         Settings newSettings = Settings.builder()
             .put(ForceMergeManagerSettings.AUTO_FORCE_MERGE_SETTING.getKey(), false)
-            .put(ForceMergeManagerSettings.SEGMENT_COUNT_THRESHOLD_FOR_AUTO_FORCE_MERGE.getKey(), 30)
+            .put(ForceMergeManagerSettings.SEGMENT_COUNT_FOR_AUTO_FORCE_MERGE.getKey(), 30)
             .build();
 
         clusterSettings.applySettings(newSettings);
 
         assertEquals(false, forceMergeManagerSettings.isAutoForceMergeFeatureEnabled());
-        assertEquals(30, (int) forceMergeManagerSettings.getSegmentCountThreshold());
+        assertEquals(30, (int) forceMergeManagerSettings.getSegmentCount());
     }
 
     public void testInvalidSettings() {
         // Test negative segment threshold
         expectThrows(IllegalArgumentException.class, () -> {
             Settings invalidSettings = Settings.builder()
-                .put(ForceMergeManagerSettings.SEGMENT_COUNT_THRESHOLD_FOR_AUTO_FORCE_MERGE.getKey(), -1)
+                .put(ForceMergeManagerSettings.SEGMENT_COUNT_FOR_AUTO_FORCE_MERGE.getKey(), -1)
                 .build();
             clusterSettings.applySettings(invalidSettings);
         });
@@ -102,13 +107,11 @@ public class ForceMergeManagerSettingsTests extends OpenSearchTestCase {
 
     public void testThreadSettings() {
         Settings newSettings = Settings.builder()
-            .put(ForceMergeManagerSettings.FORCE_MERGE_THREADS_THRESHOLD_COUNT_FOR_AUTO_FORCE_MERGE.getKey(), 8)
             .put(ForceMergeManagerSettings.CONCURRENCY_MULTIPLIER.getKey(), 5)
             .build();
 
         clusterSettings.applySettings(newSettings);
 
-        assertEquals(8, (int) forceMergeManagerSettings.getForceMergeThreadCount());
         assertEquals(5, (int) forceMergeManagerSettings.getConcurrencyMultiplier());
     }
 

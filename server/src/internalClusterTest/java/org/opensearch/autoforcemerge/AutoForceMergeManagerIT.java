@@ -12,6 +12,7 @@ import com.carrotsearch.randomizedtesting.annotations.ThreadLeakFilters;
 import org.opensearch.cluster.metadata.IndexMetadata;
 import org.opensearch.common.settings.Settings;
 import org.opensearch.common.unit.TimeValue;
+import org.opensearch.common.util.concurrent.OpenSearchExecutors;
 import org.opensearch.core.common.unit.ByteSizeUnit;
 import org.opensearch.core.common.unit.ByteSizeValue;
 import org.opensearch.index.IndexSettings;
@@ -53,8 +54,9 @@ public class AutoForceMergeManagerIT extends RemoteStoreBaseIntegTestCase {
             .put(super.nodeSettings(nodeOrdinal))
             .put(REMOTE_CLUSTER_STATE_ENABLED_SETTING.getKey(), true)
             .put(Node.NODE_SEARCH_CACHE_SIZE_SETTING.getKey(), cacheSize.toString())
+            .put(OpenSearchExecutors.NODE_PROCESSORS_SETTING.getKey(), 32)
             .put(ForceMergeManagerSettings.AUTO_FORCE_MERGE_SCHEDULER_INTERVAL.getKey(), SCHEDULER_INTERVAL)
-            .put(ForceMergeManagerSettings.SEGMENT_COUNT_THRESHOLD_FOR_AUTO_FORCE_MERGE.getKey(), SEGMENT_COUNT)
+            .put(ForceMergeManagerSettings.SEGMENT_COUNT_FOR_AUTO_FORCE_MERGE.getKey(), SEGMENT_COUNT)
             .put(ForceMergeManagerSettings.MERGE_DELAY_BETWEEN_SHARDS_FOR_AUTO_FORCE_MERGE.getKey(), MERGE_DELAY)
             .build();
     }
@@ -115,7 +117,7 @@ public class AutoForceMergeManagerIT extends RemoteStoreBaseIntegTestCase {
         Settings settings = Settings.builder()
             .put(IndexMetadata.SETTING_NUMBER_OF_SHARDS, 1)
             .put(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, 0)
-            .put(IndexSettings.INDEX_IS_WARM_CANDIDATE_INDEX.getKey(), false)
+            .put(IndexSettings.INDEX_ALLOW_AUTO_FORCE_MERGES.getKey(), false)
             .build();
         assertAcked(client().admin().indices().prepareCreate(INDEX_NAME_1).setSettings(settings).get());
         for (int i = 0; i < INGESTION_COUNT; i++) {
